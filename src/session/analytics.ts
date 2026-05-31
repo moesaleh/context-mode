@@ -136,7 +136,19 @@ export interface RuntimeStats {
   calls: Record<string, number>;
   sessionStart: number;
   cacheHits: number;
+  cacheMisses?: number;
   cacheBytesSaved: number;
+}
+
+/**
+ * Index observability snapshot — point-in-time view of the persistent
+ * content store. Optional input to `formatReport` so callers that don't
+ * have store access (or don't want the extra DB hit) can omit it.
+ */
+export interface IndexState {
+  totalChunks: number;
+  totalSources: number;
+  lastIndexedAt?: string; // ISO-8601 when available
 }
 
 // ─────────────────────────────────────────────────────────
@@ -160,6 +172,8 @@ export interface FullReport {
   };
   cache?: {
     hits: number;
+    misses: number;
+    hit_rate: number; // hits / (hits + misses); 0 when both are zero
     bytes_saved: number;
     ttl_hours_left: number;
     total_with_cache: number;
@@ -450,12 +464,21 @@ export class AnalyticsEngine {
 
     // ── Cache ──
     let cache: FullReport["cache"];
-    if (runtimeStats.cacheHits > 0 || runtimeStats.cacheBytesSaved > 0) {
+    const cacheMisses = runtimeStats.cacheMisses ?? 0;
+    if (runtimeStats.cacheHits > 0 || runtimeStats.cacheBytesSaved > 0 || cacheMisses > 0) {
       const totalWithCache = totalProcessed + runtimeStats.cacheBytesSaved;
       const totalSavingsRatio = totalWithCache / Math.max(totalBytesReturned, 1);
       const ttlHoursLeft = Math.max(0, 24 - Math.floor((Date.now() - runtimeStats.sessionStart) / (60 * 60 * 1000)));
+      // hit_rate is the nominal cache effectiveness — the metric ctx_stats
+      // historically inferred-only by diffing tokens_saved snapshots. When
+      // there is no activity we report 0 instead of NaN/undefined so the
+      // renderer stays JSON-safe.
+      const totalLookups = runtimeStats.cacheHits + cacheMisses;
+      const hitRate = totalLookups > 0 ? runtimeStats.cacheHits / totalLookups : 0;
       cache = {
         hits: runtimeStats.cacheHits,
+        misses: cacheMisses,
+        hit_rate: hitRate,
         bytes_saved: runtimeStats.cacheBytesSaved,
         ttl_hours_left: ttlHoursLeft,
         total_with_cache: totalWithCache,
@@ -2705,6 +2728,37 @@ function renderMultiAdapter(multiAdapter: MultiAdapterLifetimeStats | undefined)
  * - Project memory: category bars showing persistent data across sessions
  * - No: Pct column, category tables, tips, jargon
  */
+/**
+ * Render the machine-readable Observability block (cache + index state).
+ *
+ * Returns an empty array when no observability data is available, so callers
+ * can `lines.push(...renderObservabilityBlock(...))` unconditionally and the
+ * section is omitted when the kit has nothing to report.
+ *
+ * Shared between the narrative path (early-returns when conversation.events > 0)
+ * and the legacy path so the block surfaces in both, matching the contract
+ * that the handler always passes `indexState` regardless of code path.
+ */
+function renderObservabilityBlock(
+  report: FullReport,
+  indexState?: IndexState,
+): string[] {
+  const obs: string[] = [];
+  if (report.cache) {
+    const hitRatePct = (report.cache.hit_rate * 100).toFixed(1);
+    obs.push(`cache.hit_rate: ${hitRatePct}% (${report.cache.hits} hits / ${report.cache.misses} misses)`);
+  }
+  if (indexState) {
+    obs.push(`index.total_chunks: ${indexState.totalChunks}`);
+    obs.push(`index.total_sources: ${indexState.totalSources}`);
+    if (indexState.lastIndexedAt) {
+      obs.push(`index.last_indexed_at: ${indexState.lastIndexedAt}`);
+    }
+  }
+  if (obs.length === 0) return [];
+  return ["", "## Observability", ...obs];
+}
+
 export function formatReport(
   report: FullReport,
   version?: string,
@@ -2741,6 +2795,12 @@ export function formatReport(
      * single-adapter renderer output unchanged.
      */
     multiAdapter?: MultiAdapterLifetimeStats;
+    /**
+     * Point-in-time snapshot of the persistent content store. Optional —
+     * callers that don't have store access can omit it and the renderer
+     * skips the observability section gracefully.
+     */
+    indexState?: IndexState;
     /**
      * 5-section narrative renderer overrides. Defaults to ambient
      * `process.cwd()` + `Date.now()` + `detectLocaleAndTz()` for production
@@ -2818,6 +2878,9 @@ export function formatReport(
       conversation, lifetime, multiAdapter, realBytes,
       cwd, locale, tz, now, version, latestVersion,
     }));
+    // Append Observability so cache.hit_rate / index.* surface in the
+    // narrative path too (handler passes indexState regardless of path).
+    lines.push(...renderObservabilityBlock(report, opts?.indexState));
     return lines.join("\n");
   }
 
@@ -2947,6 +3010,11 @@ export function formatReport(
 
   // ── Bottom line — business value framing (Bug #8) ──
   lines.push(...renderBottomLine(tokensSaved, lifetime));
+
+  // ── Observability — machine-readable cache + index state ──
+  // Rendered via shared helper so the narrative path (above, early-return
+  // when conversation.events > 0) emits the same block.
+  lines.push(...renderObservabilityBlock(report, opts?.indexState));
 
   // ── Footer ──
   lines.push("");
