@@ -408,6 +408,21 @@ footer{padding:64px 0 40px;text-align:center;background:var(--bg-alt);border-top
 .footer-links{font-size:14px;color:var(--text-3);margin-bottom:8px}
 .footer-meta{margin-top:18px;font-size:12px;color:var(--text-4)}
 .footer-addr{margin-top:24px;font-size:11px;color:var(--text-4);line-height:1.65}
+
+/* ── Sticky bottom CTA ── */
+.sticky-cta{position:fixed;bottom:0;left:0;right:0;background:var(--bg-alt);border-top:1px solid var(--border);padding:14px 24px;z-index:100;transform:translateY(100%);transition:transform .35s ease;box-shadow:0 -4px 24px rgba(15,20,25,.04)}
+.sticky-cta.visible{transform:translateY(0)}
+.sticky-cta .sticky-inner{display:flex;align-items:center;justify-content:space-between;gap:24px;max-width:1080px;margin:0 auto;width:100%}
+.sticky-cta .sticky-text{color:var(--text-2);font-size:14px;margin:0}
+.sticky-cta .sticky-text strong{color:var(--text);font-weight:700}
+.sticky-cta .sticky-button{background:var(--text);color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;white-space:nowrap;transition:.15s}
+.sticky-cta .sticky-button:hover{background:var(--accent-dark);text-decoration:none}
+@media (max-width:640px){
+  .sticky-cta{padding:12px 16px}
+  .sticky-cta .sticky-inner{flex-direction:column;gap:10px;align-items:stretch}
+  .sticky-cta .sticky-text{font-size:13px;text-align:center}
+  .sticky-cta .sticky-button{text-align:center}
+}
 </style>
 </head>
 <body>
@@ -1455,6 +1470,13 @@ commit_strong_cadence, commit_fix_heavy</span></pre>
   <p class="footer-addr">MKSF LTD · Suite 8805 5 Brayford Square · London E1 0SG · United Kingdom</p>
 </footer>
 
+<div class="sticky-cta" id="sticky-cta" aria-hidden="true">
+  <div class="sticky-inner">
+    <p class="sticky-text"><strong>Pro $20 / seat / month.</strong> No tiers, no trial, no surprise bills.</p>
+    <a class="sticky-button" href="https://platform.context-mode.com/signup">Start →</a>
+  </div>
+</div>
+
 <script>
 // Reveal on scroll
 const o = new IntersectionObserver(e => {
@@ -1475,6 +1497,24 @@ fetch('https://platform.context-mode.com/api/v1/public/stats')
     if (d.devs) document.getElementById('stat-devs').textContent = d.devs;
   })
   .catch(() => {});
+
+// Sticky CTA: reveal after 80vh scroll
+(function(){
+  const cta = document.getElementById('sticky-cta');
+  if (!cta) return;
+  const threshold = () => window.innerHeight * 0.8;
+  let visible = false;
+  const onScroll = () => {
+    const shouldShow = window.scrollY > threshold();
+    if (shouldShow !== visible) {
+      visible = shouldShow;
+      cta.classList.toggle('visible', visible);
+      cta.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    }
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
 
 </script>
 </body>
