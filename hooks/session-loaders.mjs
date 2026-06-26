@@ -151,7 +151,14 @@ export function attributeAndInsertEvents(db, sessionId, events, input, projectDi
         ? bytesList[i].bytesAvoided
         : (typeof events[i]?.bytes_avoided === "number" && events[i].bytes_avoided > 0 ? events[i].bytes_avoided : 0);
       const withSavings = avoidedBytes > 0 ? { ...payload, bytes_avoided: avoidedBytes } : payload;
-      maybeForward({ ...withSavings, session_id: sessionId }, platform);
+      // Forward bytes_retrieved (the OTHER half of the with/without ratio): the
+      // tool_response size a ctx_search / ctx_fetch_and_index call paid to access
+      // kept-out content. Mirrors the bytes_avoided stamp — positive-only guard.
+      const retrievedBytes = typeof events[i]?.bytes_retrieved === "number" && events[i].bytes_retrieved > 0
+        ? events[i].bytes_retrieved
+        : 0;
+      const withRetrieval = retrievedBytes > 0 ? { ...withSavings, bytes_retrieved: retrievedBytes } : withSavings;
+      maybeForward({ ...withRetrieval, session_id: sessionId }, platform);
     }
   }
 

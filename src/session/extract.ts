@@ -31,6 +31,15 @@ export interface SessionEvent {
    */
   bytes_avoided?: number;
   /**
+   * Optional — bytes the model PAID to ACCESS kept-out content for this event:
+   * the tool_response byte length of a `ctx_search` / `ctx_fetch_and_index`
+   * call. This is the OTHER half of the with/without ratio (bytes_avoided is
+   * the kept-out half). Sandbox compute (ctx_execute/batch/file) is work-output
+   * and is excluded. Present only when the call is a retrieval call and its
+   * tool_response is non-empty.
+   */
+  bytes_retrieved?: number;
+  /**
    * Optional structured cost/usage fields (Wave 2b). Emitted by
    * extractAgentUsage alongside the colon-string `data` so the forward
    * envelope can spread them to the platform as typed columns instead of an
@@ -1034,12 +1043,43 @@ function extractMcpToolCall(input: HookInput): SessionEvent[] {
     ? `{"tool_name":${JSON.stringify(tool_name)},"params_raw":${JSON.stringify(cappedStr)},"truncated":true}`
     : `{"tool_name":${JSON.stringify(tool_name)},"params":${cappedStr}}`;
 
-  return [{
+  const event: SessionEvent = {
     type: "mcp_tool_call",
     category: "mcp_tool_call",
     data: safeString(payload),
     priority: 4,
-  }];
+  };
+
+  // Retrieval cost (the OTHER half of the with/without ratio): when this MCP
+  // call is a `ctx_search` or `ctx_fetch_and_index` retrieval, the tool_response
+  // IS the kept-out content the model paid to access — record its byte length.
+  // Sandbox compute (ctx_execute/batch/file) is work-output, NOT retrieval, so
+  // it is intentionally excluded. Match by suffix char-algorithmically (host
+  // prefixes the name like `mcp__plugin_…__ctx_search`); NO regex.
+  if (isRetrievalToolName(tool_name)) {
+    const response = safeString(input.tool_response);
+    if (response.length > 0) {
+      event.bytes_retrieved = Buffer.byteLength(response, "utf8");
+    }
+  }
+
+  return [event];
+}
+
+/** Tool-name suffixes that denote a RETRIEVAL call (kept-out content accessed). */
+const RETRIEVAL_TOOL_SUFFIXES = ["ctx_search", "ctx_fetch_and_index"];
+
+/**
+ * True when `toolName` ends with one of the retrieval suffixes. Char-level
+ * suffix comparison via String.prototype.endsWith — no regex. MCP host names
+ * arrive prefixed (e.g. `mcp__plugin_context-mode_context-mode__ctx_search`),
+ * so an exact-name check would miss them; suffix match is host-agnostic.
+ */
+function isRetrievalToolName(toolName: string): boolean {
+  for (const suffix of RETRIEVAL_TOOL_SUFFIXES) {
+    if (toolName.endsWith(suffix)) return true;
+  }
+  return false;
 }
 
 /**
