@@ -143,7 +143,15 @@ export function attributeAndInsertEvents(db, sessionId, events, input, projectDi
         ? { ...withBash, latency_ms: latencyMs, duration_bucket: bucketizeDuration(latencyMs) }
         : withBash;
       const payload = rollup ? { ...withLatency, ...rollup } : withLatency;
-      maybeForward({ ...payload, session_id: sessionId }, platform);
+      // Forward bytes_avoided (the context-saving savings signal) so the
+      // platform FinOps P&L can derive savings_usd = bytes/4 × price. Sourced
+      // from the canonical per-event bytesList (with an event-field fallback);
+      // only stamped when positive so the wire payload stays minimal.
+      const avoidedBytes = (bytesList && bytesList[i] && bytesList[i].bytesAvoided > 0)
+        ? bytesList[i].bytesAvoided
+        : (typeof events[i]?.bytes_avoided === "number" && events[i].bytes_avoided > 0 ? events[i].bytes_avoided : 0);
+      const withSavings = avoidedBytes > 0 ? { ...payload, bytes_avoided: avoidedBytes } : payload;
+      maybeForward({ ...withSavings, session_id: sessionId }, platform);
     }
   }
 

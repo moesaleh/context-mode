@@ -344,6 +344,41 @@ describe("platform-bridge wire — session-loaders forwards events", () => {
     expect(body).toHaveProperty("session_category");
     expect(body).toHaveProperty("error");
   });
+
+  test("savings: positive bytes_avoided is forwarded for the platform P&L", async () => {
+    writePlatformConfig(
+      fakeHome,
+      { api_key: "ctxm_savings_test", platform_url: "https://example.test/api/v1" },
+    );
+
+    const { loaders } = await importFresh();
+    const db = makeMockDb();
+
+    // A redirect event that kept 8000 bytes out of the context window — the
+    // context-saving "profit" signal the platform FinOps P&L sums into savings.
+    const redirectEvent = {
+      type: "redirect",
+      category: "redirect",
+      data: "curl https://example.com",
+      bytes_avoided: 8000,
+    };
+
+    loaders.attributeAndInsertEvents(
+      db,
+      "sid",
+      [redirectEvent],
+      { workspace_roots: ["/tmp/p"] },
+      "/tmp/p",
+      "PostToolUse",
+      (evs: { type: string }[]) => evs.map(() => ({ projectDir: "/tmp/p" })),
+    );
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(fetchSpy).toHaveBeenCalled();
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
+    expect(body.bytes_avoided).toBe(8000);
+  });
 });
 
 // ─────────────────────────────────────────────────────────
